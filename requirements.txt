@@ -13,7 +13,6 @@ distlib
 dulwich
 everett
 filelock
-gurobipy==9.1.2
 identify
 idna
 importlib-metadata

@@ -14,6 +14,9 @@ from src.concrete_layers.basic_block import BasicBlock
 from src.concrete_layers.pad import Pad
 from src.utilities.onnx_loader import ConvertModel
 
+from transformers import YolosForObjectDetection
+from transformers import AutoModel
+from transformers import AutoFeatureExtractor, AutoModelForImageClassification
 
 def lecture_network_small() -> nn.Sequential:
     net = nn.Sequential(
@@ -207,6 +210,67 @@ def cifar10_conv_small() -> nn.Sequential:
         ]
     )
 
+def yolos_tiny() -> nn.Sequential:
+    # Example smaller network that takes in one of the images from the COCO dataset
+    # And detects the object that it has the highest confidence in
+    return nn.Sequential(
+        *[
+            nn.Linear(in_features=426, out_features=192),
+            nn.ReLU(),
+            nn.Flatten(start_dim=1, end_dim=-1),
+            nn.Linear(192 * 192 * 10, 1920), 
+            nn.ReLU(), 
+            nn.Linear(1920, 1000),
+            nn.ReLU(),
+            nn.Linear(1000, 100),
+        ]
+    )
+    layers = []
+
+    yoloModel = YolosForObjectDetection.from_pretrained('hustvl/yolos-tiny')
+    #barkModel = AutoModel.from_pretrained("suno/bark-small")
+    # barkblocks = barkModel.semantic.base_model.layers
+    # Used on MNIST dataset for 768 input size
+    #BEiTModel = AutoModelForImageClassification.from_pretrained("jadohu/BEiT-finetuned")
+    
+
+    # This method of manually building the model architecture from the pretrained model 
+    # is what needs to happen.
+    # However, abstract_module_mapper does not support all layer types. 
+    # So a smaller and less complex model is what needs to be handled
+    print(yoloModel.vit)
+    yoloEmbedder = yoloModel.vit.embeddings
+    # layers.append(yoloEmbedder.patch_embeddings.projection)
+    # layers.append(nn.Conv2d(3, 192, kernel_size=(16, 16)))
+    layers.append(nn.ReLU())
+    yoloLayer = yoloModel.vit.encoder.layer
+
+    # This network doesn't include the dropout layers that the original YOLOs tiny architecture has
+    for i, l in enumerate(yoloLayer):
+        # print(f"layer_{i}: {l}")
+        layers.append(l.attention.attention.query)
+        layers.append(l.attention.attention.key)
+        layers.append(l.attention.attention.value)
+        # Dropout layer
+
+        layers.append(l.attention.output.dense)
+        # Dropout layer
+
+        layers.append(l.intermediate.dense)
+        layers.append(nn.ReLU())
+
+        layers.append(l.output.dense)
+        # Dropout layer
+
+    # Single dimension tensor
+    layers.append(nn.Flatten(start_dim=1, end_dim=-1))
+    # 100 possible objects
+    layers += [nn.Linear(192 * 192 * 10, 1920), 
+               nn.ReLU(), nn.Linear(1920, 100)
+               ]
+    layers.append(nn.Flatten(start_dim=1, end_dim=-1))
+
+    return nn.Sequential(*layers)
 
 def cifar10_cnn_A() -> nn.Sequential:
     return nn.Sequential(
@@ -706,6 +770,8 @@ def load_net(  # noqa: C901
 ) -> nn.Module:
     if path.split(".")[-1] in ["onnx", "gz"]:
         return load_onnx_model(path)[0]
+    elif "yolos_ti" in path:
+        original_network = yolos_tiny()
     elif "mnist_sig" in path and "flattened" in path:
         assert n_layers is not None and n_neurons_per_layer is not None
         original_network = mnist_sig_a_b(n_layers, n_neurons_per_layer)
@@ -804,11 +870,16 @@ def load_net(  # noqa: C901
         raise NotImplementedError(
             "The network specified in the configuration, could not be loaded."
         )
-    state_dict = torch.load(path)
+    
+    torch.save(original_network.state_dict(), path)
+    # print(original_network.state_dict().keys())
+    state_dict = torch.load(path, 
+                            map_location=torch.device('cpu') if not torch.cuda.is_available() 
+                            else None) 
     if "state_dict" in state_dict.keys():
         state_dict = state_dict["state_dict"]
     original_network.load_state_dict(state_dict)
-    original_network = original_network.blocks
+    # original_network = original_network.blocks
     freeze_network(original_network)
 
     return original_network

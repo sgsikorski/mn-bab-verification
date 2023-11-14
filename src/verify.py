@@ -87,7 +87,7 @@ if __name__ == "__main__":
 
         pred_label = torch.argmax(original_network(input)).item()
         if pred_label != label:
-            print("Network fails on test image, skipping.\n")
+            print(f"Network fails on test image {i}, skipping.\n")
             continue
         else:
             n_correct += 1
