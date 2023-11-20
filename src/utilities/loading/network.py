@@ -14,9 +14,8 @@ from src.concrete_layers.basic_block import BasicBlock
 from src.concrete_layers.pad import Pad
 from src.utilities.onnx_loader import ConvertModel
 
-from transformers import YolosForObjectDetection
-from transformers import AutoModel
-from transformers import AutoFeatureExtractor, AutoModelForImageClassification
+import configparser
+import math
 
 def lecture_network_small() -> nn.Sequential:
     net = nn.Sequential(
@@ -209,6 +208,63 @@ def cifar10_conv_small() -> nn.Sequential:
             nn.Linear(in_features=100, out_features=10),
         ]
     )
+
+def agl_stan() -> nn.Sequential:
+    layers = []
+
+    config = configparser.ConfigParser()
+    config.read(f'AGLSTAN/data/chi/config.conf')
+    # model = AGLSTAN.AGLSTAN(config)
+
+    node_num = int(config['data']['num_nodes'])
+    dim_in = int(config['model']['input_dim'])
+    dim_out = int(config['model']['output_dim'])
+    hidden_size = node_num * dim_out
+    cheb_k = int(config['model']['cheb_k'])
+    embed_dim = int(config['model']['embed_dim'])
+    num_layers = int(config['model']['num_layers'])
+    filter_size = int(config['model']['filter_size'])
+    head_size = 6
+    att_size = hidden_size // head_size
+    scale = att_size ** -0.5
+        
+    # For positional encoding
+    num_timescales = hidden_size // 2
+    max_timescale = 10000.0
+    min_timescale = 1.0
+    log_timescale_increment = (
+        math.log(float(max_timescale) / float(min_timescale)) /
+        max(num_timescales - 1, 1))
+    inv_timescales = min_timescale * torch.exp(
+        torch.arange(num_timescales, dtype=torch.float32) *
+        -log_timescale_increment)
+    # nn.Module.register_buffer(name='inv_timescales', tensor=inv_timescales)
+
+    # AGL Layer
+    for _ in range(num_layers):
+        layers += [nn.Linear(77, 77)]
+
+    for _ in range(num_layers):
+        # TSA Layer
+        layers += [
+            nn.BatchNorm2d(hidden_size, eps=1e-6),
+            # Multihead attention
+            nn.Linear(hidden_size, head_size * att_size, bias=False),
+            nn.Linear(hidden_size, head_size * att_size, bias=False),
+            nn.Linear(hidden_size, head_size * att_size, bias=False),
+            nn.Linear(head_size * att_size, hidden_size, bias=False),
+
+            nn.BatchNorm2d(hidden_size, eps=1e-6),
+
+            # Feed forward network
+            nn.Linear(hidden_size, filter_size), 
+            nn.ReLU(), 
+            nn.Linear(filter_size, hidden_size),
+        ]
+    layers += [nn.BatchNorm2d(hidden_size, eps=1e-6)]
+    layers += [nn.Conv2d(int(config['data']['window']), int(config['data']['horizon']), padding=(2, 2), kernel_size=(5, 5), bias=True)]
+    layers += [nn.Flatten(start_dim=1, end_dim=-1)]
+    return nn.Sequential(*layers)
 
 def yolos_tiny() -> nn.Sequential:
     # Example smaller network that takes in one of the images from the COCO dataset
@@ -772,6 +828,8 @@ def load_net(  # noqa: C901
         return load_onnx_model(path)[0]
     elif "yolos_ti" in path:
         original_network = yolos_tiny()
+    elif "AGLSTAN" in path:
+        original_network = agl_stan()
     elif "mnist_sig" in path and "flattened" in path:
         assert n_layers is not None and n_neurons_per_layer is not None
         original_network = mnist_sig_a_b(n_layers, n_neurons_per_layer)
@@ -871,11 +929,13 @@ def load_net(  # noqa: C901
             "The network specified in the configuration, could not be loaded."
         )
     
-    torch.save(original_network.state_dict(), path)
+    # torch.save(original_network.state_dict(), path)
+    testPath = path.replace("model", "model_test")
+    torch.save(original_network, testPath)
     # print(original_network.state_dict().keys())
-    state_dict = torch.load(path, 
+    state_dict = torch.load(testPath, 
                             map_location=torch.device('cpu') if not torch.cuda.is_available() 
-                            else None) 
+                            else None).state_dict()
     if "state_dict" in state_dict.keys():
         state_dict = state_dict["state_dict"]
     original_network.load_state_dict(state_dict)
