@@ -1,0 +1,26 @@
+{
+    "configurations": [
+        {
+            "name": "Run Preprocessing",
+            "type": "python",
+            "request": "launch",
+            "program": "src/utilities/loading/preprocessData.py",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Run verifier",
+            "type": "python",
+            "request": "launch",
+            "program": "src/verify.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "-c",
+                "configs/SE4ML/AGL-STAN.json",
+                ">",
+                "logs/verifierLog.txt"
+            ]
+        },
+    ]
+}

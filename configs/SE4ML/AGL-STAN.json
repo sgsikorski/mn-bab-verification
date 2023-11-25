@@ -3,19 +3,29 @@
     "input_dim": [
         8,
         77,
-        365
+        8
       ],
       "normalization_means": [
-        0.4914,
-        0.4822,
-        0.4465
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
       ],
       "normalization_stds": [
-        0.2471,
-        0.2435,
-        0.2616
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
       ],
-      "test_data_path": "../AGLSTAN/data/chi/crime.csv",
+      "test_data_path": "../data/chi/crime.csv",
       "eps": 0.00784313725490196,
       "use_gpu": false,
       "optimize_alpha": true,

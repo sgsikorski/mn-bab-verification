@@ -2,6 +2,7 @@ import csv
 import time
 import sys
 from comet_ml import Experiment  # type: ignore[import]
+import numpy as np
 
 import torch
 from torch import nn
@@ -85,7 +86,11 @@ if __name__ == "__main__":
             break
         input, input_lb, input_ub = transform_and_bound(pixel_values, config, device)
 
-        pred_label = torch.argmax(original_network(input)).item()
+        # Change this so that we run 8 of the 77, 8 crime matrix from the alpha=8 window
+        # Then we can extract each for i, j of the predicted crime matrix and compare
+        crime_matrix = original_network(input).view(77, 8)
+        pred_label = 0 if crime_matrix[i // 77][i % 8] < 0 else 1
+        # pred_label = torch.argmax(original_network(input)).item()
         if pred_label != label:
             print(f"Network fails on test image {i}, skipping.\n")
             continue

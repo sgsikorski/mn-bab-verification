@@ -51,7 +51,7 @@ class MNBaBVerifier:
         self.outer = config.outer
         self.domain_splitting = config.domain_splitting
 
-        assert len(self.network.output_dim) == 1
+        # assert len(self.network.output_dim) == 1
         self.n_output_nodes = self.network.output_dim[0]
 
     def _verify_property_with_abstract_element(

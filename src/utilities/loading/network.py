@@ -1,6 +1,7 @@
 import gzip
 import typing
 from os.path import exists
+
 from typing import List, Optional, Sequence, Tuple, Type
 
 import onnx  # type: ignore[import]
@@ -213,7 +214,7 @@ def agl_stan() -> nn.Sequential:
     layers = []
 
     config = configparser.ConfigParser()
-    config.read(f'AGLSTAN/data/chi/config.conf')
+    config.read(f'../AGLSTAN/data/chi/config.conf')
     # model = AGLSTAN.AGLSTAN(config)
 
     node_num = int(config['data']['num_nodes'])
@@ -224,108 +225,45 @@ def agl_stan() -> nn.Sequential:
     embed_dim = int(config['model']['embed_dim'])
     num_layers = int(config['model']['num_layers'])
     filter_size = int(config['model']['filter_size'])
+    # batch_size = int(config['train']['batch_size'])
+    window = int(config['data']['window'])
     head_size = 6
     att_size = hidden_size // head_size
     scale = att_size ** -0.5
-        
-    # For positional encoding
-    num_timescales = hidden_size // 2
-    max_timescale = 10000.0
-    min_timescale = 1.0
-    log_timescale_increment = (
-        math.log(float(max_timescale) / float(min_timescale)) /
-        max(num_timescales - 1, 1))
-    inv_timescales = min_timescale * torch.exp(
-        torch.arange(num_timescales, dtype=torch.float32) *
-        -log_timescale_increment)
-    # nn.Module.register_buffer(name='inv_timescales', tensor=inv_timescales)
 
+    layers.append(nn.Linear(window, node_num))
     # AGL Layer
     for _ in range(num_layers):
-        layers += [nn.Linear(77, 77)]
+        # encoder.gconv_layers.0.gconv_layer.weights_pool
+        # encoder.gconv_layers.0.gconv_layer.bias_pool
+        layers += [
+                nn.Linear(node_num, node_num), 
+                nn.ReLU(), 
+                nn.Linear(node_num, hidden_size)
+        ]
 
-    for _ in range(num_layers):
         # TSA Layer
         layers += [
-            nn.BatchNorm2d(hidden_size, eps=1e-6),
+            #nn.BatchNorm2d(hidden_size, eps=1e-6),
             # Multihead attention
             nn.Linear(hidden_size, head_size * att_size, bias=False),
-            nn.Linear(hidden_size, head_size * att_size, bias=False),
-            nn.Linear(hidden_size, head_size * att_size, bias=False),
+            nn.ReLU(),
+            #nn.Linear(hidden_size, head_size * att_size, bias=False),
+            #nn.Linear(hidden_size, head_size * att_size, bias=False),
             nn.Linear(head_size * att_size, hidden_size, bias=False),
 
-            nn.BatchNorm2d(hidden_size, eps=1e-6),
+            #nn.BatchNorm2d(hidden_size, eps=1e-6),
 
             # Feed forward network
             nn.Linear(hidden_size, filter_size), 
             nn.ReLU(), 
             nn.Linear(filter_size, hidden_size),
+            nn.Linear(hidden_size, node_num),
         ]
-    layers += [nn.BatchNorm2d(hidden_size, eps=1e-6)]
+    layers += [nn.ReLU(), nn.Linear(node_num, 8)]
+    #layers += [nn.BatchNorm2d(hidden_size, eps=1e-6)]
+    # _.view(batch_size, window, node_num, -1)
     layers += [nn.Conv2d(int(config['data']['window']), int(config['data']['horizon']), padding=(2, 2), kernel_size=(5, 5), bias=True)]
-    layers += [nn.Flatten(start_dim=1, end_dim=-1)]
-    return nn.Sequential(*layers)
-
-def yolos_tiny() -> nn.Sequential:
-    # Example smaller network that takes in one of the images from the COCO dataset
-    # And detects the object that it has the highest confidence in
-    return nn.Sequential(
-        *[
-            nn.Linear(in_features=426, out_features=192),
-            nn.ReLU(),
-            nn.Flatten(start_dim=1, end_dim=-1),
-            nn.Linear(192 * 192 * 10, 1920), 
-            nn.ReLU(), 
-            nn.Linear(1920, 1000),
-            nn.ReLU(),
-            nn.Linear(1000, 100),
-        ]
-    )
-    layers = []
-
-    yoloModel = YolosForObjectDetection.from_pretrained('hustvl/yolos-tiny')
-    #barkModel = AutoModel.from_pretrained("suno/bark-small")
-    # barkblocks = barkModel.semantic.base_model.layers
-    # Used on MNIST dataset for 768 input size
-    #BEiTModel = AutoModelForImageClassification.from_pretrained("jadohu/BEiT-finetuned")
-    
-
-    # This method of manually building the model architecture from the pretrained model 
-    # is what needs to happen.
-    # However, abstract_module_mapper does not support all layer types. 
-    # So a smaller and less complex model is what needs to be handled
-    print(yoloModel.vit)
-    yoloEmbedder = yoloModel.vit.embeddings
-    # layers.append(yoloEmbedder.patch_embeddings.projection)
-    # layers.append(nn.Conv2d(3, 192, kernel_size=(16, 16)))
-    layers.append(nn.ReLU())
-    yoloLayer = yoloModel.vit.encoder.layer
-
-    # This network doesn't include the dropout layers that the original YOLOs tiny architecture has
-    for i, l in enumerate(yoloLayer):
-        # print(f"layer_{i}: {l}")
-        layers.append(l.attention.attention.query)
-        layers.append(l.attention.attention.key)
-        layers.append(l.attention.attention.value)
-        # Dropout layer
-
-        layers.append(l.attention.output.dense)
-        # Dropout layer
-
-        layers.append(l.intermediate.dense)
-        layers.append(nn.ReLU())
-
-        layers.append(l.output.dense)
-        # Dropout layer
-
-    # Single dimension tensor
-    layers.append(nn.Flatten(start_dim=1, end_dim=-1))
-    # 100 possible objects
-    layers += [nn.Linear(192 * 192 * 10, 1920), 
-               nn.ReLU(), nn.Linear(1920, 100)
-               ]
-    layers.append(nn.Flatten(start_dim=1, end_dim=-1))
-
     return nn.Sequential(*layers)
 
 def cifar10_cnn_A() -> nn.Sequential:
@@ -826,8 +764,6 @@ def load_net(  # noqa: C901
 ) -> nn.Module:
     if path.split(".")[-1] in ["onnx", "gz"]:
         return load_onnx_model(path)[0]
-    elif "yolos_ti" in path:
-        original_network = yolos_tiny()
     elif "AGLSTAN" in path:
         original_network = agl_stan()
     elif "mnist_sig" in path and "flattened" in path:
@@ -929,21 +865,61 @@ def load_net(  # noqa: C901
             "The network specified in the configuration, could not be loaded."
         )
     
-    # torch.save(original_network.state_dict(), path)
-    testPath = path.replace("model", "model_test")
-    torch.save(original_network, testPath)
-    # print(original_network.state_dict().keys())
-    state_dict = torch.load(testPath, 
+    best_model = torch.load("../AGLSTAN/res/chi/best_model.pth", map_location=torch.device('cpu'))
+    best_model_state_dict = best_model['state_dict']    
+    state_dict = torch.load(path, 
                             map_location=torch.device('cpu') if not torch.cuda.is_available() 
-                            else None).state_dict()
+                            else None)
     if "state_dict" in state_dict.keys():
         state_dict = state_dict["state_dict"]
+    state_dict = convertStateDict(original_network, original_network.state_dict(), best_model_state_dict)
     original_network.load_state_dict(state_dict)
     # original_network = original_network.blocks
     freeze_network(original_network)
 
     return original_network
 
+def convertStateDict(original_network, state_dict, best_state_dict):
+    # Assign state_dict values to cooresponding original_network layers
+    state_dict['1.weight'] = best_state_dict['encoder.gconv_layers.0.gconv_layer.linear.weight']
+    state_dict['1.bias'] = best_state_dict['encoder.gconv_layers.0.gconv_layer.linear.bias']
+    state_dict['4.weight'] = best_state_dict['encoder.encoders.0.self_attention.linear_q.weight']
+    state_dict['6.weight'] = best_state_dict['encoder.encoders.0.self_attention.output_layer.weight']
+
+    state_dict['7.weight'] = best_state_dict['encoder.encoders.0.ffn.layer.0.weight']
+    state_dict['7.bias'] = best_state_dict['encoder.encoders.0.ffn.layer.0.bias']
+
+    state_dict['9.weight'] = best_state_dict['encoder.encoders.0.ffn.layer.2.weight']
+    state_dict['9.bias'] = best_state_dict['encoder.encoders.0.ffn.layer.2.bias']
+
+
+    state_dict['11.weight'] = best_state_dict['encoder.gconv_layers.1.gconv_layer.linear.weight']
+    state_dict['11.bias'] = best_state_dict['encoder.gconv_layers.1.gconv_layer.linear.bias']
+    state_dict['14.weight'] = best_state_dict['encoder.encoders.1.self_attention.linear_q.weight']
+    state_dict['16.weight'] = best_state_dict['encoder.encoders.0.self_attention.output_layer.weight']
+    
+    state_dict['17.weight'] = best_state_dict['encoder.encoders.1.ffn.layer.0.weight']
+    state_dict['17.bias'] = best_state_dict['encoder.encoders.1.ffn.layer.0.bias']
+
+    state_dict['19.weight'] = best_state_dict['encoder.encoders.1.ffn.layer.2.weight']
+    state_dict['19.bias'] = best_state_dict['encoder.encoders.1.ffn.layer.2.bias']
+
+
+    state_dict['21.weight'] = best_state_dict['encoder.gconv_layers.2.gconv_layer.linear.weight']
+    state_dict['21.bias'] = best_state_dict['encoder.gconv_layers.2.gconv_layer.linear.bias']
+    state_dict['24.weight'] = best_state_dict['encoder.encoders.2.self_attention.linear_q.weight']
+    state_dict['26.weight'] = best_state_dict['encoder.encoders.0.self_attention.output_layer.weight']
+    
+    state_dict['27.weight'] = best_state_dict['encoder.encoders.2.ffn.layer.0.weight']
+    state_dict['27.bias'] = best_state_dict['encoder.encoders.2.ffn.layer.0.bias']
+
+    state_dict['29.weight'] = best_state_dict['encoder.encoders.2.ffn.layer.2.weight']
+    state_dict['29.bias'] = best_state_dict['encoder.encoders.2.ffn.layer.2.bias']
+
+
+    state_dict['33.weight'] = best_state_dict['end_conv.weight']
+    state_dict['33.bias'] = best_state_dict['end_conv.bias']
+    return state_dict
 
 def load_onnx_model(path: str) -> Tuple[nn.Sequential, Tuple[int, ...], str]:
     onnx_model = load_onnx(path)
