@@ -17,7 +17,7 @@
   ],
   "test_data_path": "test_data/cifar10_test_1000.csv",
   "eps": 0.00784313725490196,
-  "use_gpu": true,
+  "use_gpu": false,
   "optimize_alpha": true,
   "alpha_lr": 0.1,
   "alpha_opt_iterations": 20,

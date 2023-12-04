@@ -416,7 +416,7 @@ class VerificationInstance:
                 gt_constraint,
                 None,
                 self.config.verifier.outer.use_disj_adapter,
-                self.network.output_dim[-1],
+                2 if "AGLSTAN" in self.config.network.path else self.network.output_dim[-1],
                 device,
                 torch.get_default_dtype(),
             )

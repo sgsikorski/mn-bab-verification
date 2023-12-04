@@ -6,6 +6,7 @@ from typing import List, Optional, Sequence, Tuple, Type
 
 import onnx  # type: ignore[import]
 import torch
+import torch.nn.functional as F
 from bunch import Bunch  # type: ignore[import]
 import numpy as np
 
@@ -210,6 +211,167 @@ def cifar10_conv_small() -> nn.Sequential:
         ]
     )
 
+class AglStan(nn.Sequential):
+    def __init__(self, nodeEmbeddings, nodeWeights=None, nodeBias=None):
+        self.layers: List[nn.Module] = []
+        config = configparser.ConfigParser()
+        config.read(f'../AGLSTAN/data/chi/config.conf')
+
+        self.node_num = int(config['data']['num_nodes'])
+        self.dim_in = int(config['model']['input_dim'])
+        self.dim_out = int(config['model']['output_dim'])
+        self.hidden_size = self.node_num * self.dim_out
+        self.cheb_k = int(config['model']['cheb_k'])
+        self.embed_dim = int(config['model']['embed_dim'])
+        self.num_layers = int(config['model']['num_layers'])
+        self.filter_size = int(config['model']['filter_size'])
+        self.batch_size = int(config['train']['batch_size'])
+        self.window = int(config['data']['window'])
+        self.horizon = int(config['data']['horizon'])
+        self.head_size = 6
+        self.att_size = self.hidden_size // self.head_size
+        self.scale = self.att_size ** -0.5
+
+        self.node_embeddings = nodeEmbeddings
+        self.weights_pool = nodeWeights
+        self.bias_pool = nodeBias
+
+        # AGL Layers
+        self.gconv_layers = [
+            [nn.Linear(self.node_num, self.node_num)] 
+            for _ in range(self.num_layers)
+        ]
+
+        # TSA Layers
+        self.encoders = [
+            # q, k, v, output, FFN
+            [nn.Linear(self.hidden_size, self.head_size * self.att_size, bias=False),
+            nn.Linear(self.hidden_size, self.head_size * self.att_size, bias=False),
+            nn.Linear(self.hidden_size, self.head_size * self.att_size, bias=False),
+            
+            nn.Linear(self.head_size * self.att_size, self.hidden_size),
+            
+            nn.Linear(self.hidden_size, self.filter_size), 
+            nn.ReLU(), 
+            nn.Linear(self.filter_size, self.hidden_size)]
+            for _ in range(self.num_layers)
+        ]
+
+        self.endConv = [nn.Conv2d(self.window, self.horizon, padding=(2, 2), kernel_size=(5, 5), bias=False)]
+
+        self.layers += [nn.Linear(8, 77, bias=False)]
+        for layer in range(self.num_layers):
+            self.layers += self.gconv_layers[layer] + [nn.Linear(self.node_num, self.hidden_size)] + self.encoders[layer][2:] + [nn.Linear(self.hidden_size, self.node_num)]
+        self.layers += self.endConv
+        super(AglStan, self).__init__(*self.layers)
+
+    def forward(self, inputs):
+        out = inputs.view(1, 8, 77, 8)
+        for i, (g, e) in enumerate(zip(self.gconv_layers, self.encoders)):
+            # AGL Layer Forward
+            batch_size = out.shape[0]
+            seq_len = out.shape[1]
+            x = out if out.shape[2]!=self.node_num else out.view(batch_size, seq_len, self.node_num, -1)
+            out_lst = []
+            for t in range(seq_len):
+                support = F.softmax(F.relu(self.gconv_layers[i][0](torch.mm(self.node_embeddings, self.node_embeddings.transpose(0, 1)))), dim=1)
+                support_set = [torch.eye(self.node_num).to('cpu'), support]
+                for _  in range(2, self.cheb_k):
+                    support_set.append(torch.matmul(2 * support, support_set[-1]) - support_set[-2])
+                support = torch.stack(support_set, dim=0)
+                
+                w = torch.einsum('nd,dkio->nkio', self.node_embeddings, self.weights_pool[i])
+                b = torch.matmul(self.node_embeddings[i], self.bias_pool[i])
+
+                y = torch.einsum("knm,bmc->bknc", support, x[:, t, :, :])
+                y = y.permute(0, 2, 1, 3)
+                y = torch.einsum("bnki,nkio->bno", y, w) + b
+                out_lst.append(y)
+
+            out = torch.stack(out_lst, dim=1).view(batch_size, seq_len, -1)
+            
+            # TSA Forward
+            q = out
+            k = out
+            v = out
+            d_k = self.att_size
+            d_v = self.att_size
+
+            batch_size = q.size(0)
+            q = self.encoders[i][0](q).view(batch_size, -1, self.head_size, d_k)
+            k = self.encoders[i][1](k).view(batch_size, -1, self.head_size, d_k)
+            v = self.encoders[i][2](v).view(batch_size, -1, self.head_size, d_v)
+
+            q = q.transpose(1, 2)
+            v = v.transpose(1, 2)
+            k = k.transpose(1, 2).transpose(2, 3)
+
+            q.mul_(self.scale)
+            x = torch.matmul(q, k) 
+            x = torch.softmax(x, dim=3)
+            x = x.matmul(v)
+
+            x = x.transpose(1, 2).contiguous()
+            x = x.view(batch_size, -1, self.head_size * d_v)
+
+            x = self.encoders[i][3](x)
+            out = out + x
+
+            y = self.encoders[i][4](out)
+            y = self.encoders[i][5](y)
+            y = self.encoders[i][6](y)
+            out = out + y
+            out = out.view(1, 8, 77, 8)
+        # out = out.view(self.batch_size, self.window, self.node_num, -1)
+        out = self.endConv[0](out)
+        return out
+
+def convertStateDict(original_network, state_dict, best_state_dict):
+    # Assign state_dict values to cooresponding original_network layers
+    state_dict['1.weight'] = best_state_dict['encoder.gconv_layers.0.gconv_layer.linear.weight']
+    state_dict['1.bias'] = best_state_dict['encoder.gconv_layers.0.gconv_layer.linear.bias']
+    #state_dict['1.weight'] = best_state_dict['encoder.encoders.0.self_attention.linear_q.weight']
+    #state_dict['3.weight'] = best_state_dict['encoder.encoders.0.self_attention.linear_k.weight']
+    state_dict['3.weight'] = best_state_dict['encoder.encoders.0.self_attention.linear_v.weight']
+    state_dict['4.weight'] = best_state_dict['encoder.encoders.0.self_attention.output_layer.weight']
+
+    state_dict['5.weight'] = best_state_dict['encoder.encoders.0.ffn.layer.0.weight']
+    state_dict['5.bias'] = best_state_dict['encoder.encoders.0.ffn.layer.0.bias']
+    # ReLU
+    state_dict['7.weight'] = best_state_dict['encoder.encoders.0.ffn.layer.2.weight']
+    state_dict['7.bias'] = best_state_dict['encoder.encoders.0.ffn.layer.2.bias']
+
+
+    state_dict['9.weight'] = best_state_dict['encoder.gconv_layers.1.gconv_layer.linear.weight']
+    state_dict['9.bias'] = best_state_dict['encoder.gconv_layers.1.gconv_layer.linear.bias']
+    #state_dict['9.weight'] = best_state_dict['encoder.encoders.1.self_attention.linear_q.weight']
+    #state_dict['10.weight'] = best_state_dict['encoder.encoders.1.self_attention.linear_k.weight']
+    state_dict['11.weight'] = best_state_dict['encoder.encoders.1.self_attention.linear_v.weight']
+    state_dict['12.weight'] = best_state_dict['encoder.encoders.0.self_attention.output_layer.weight']
+    
+    state_dict['13.weight'] = best_state_dict['encoder.encoders.1.ffn.layer.0.weight']
+    state_dict['13.bias'] = best_state_dict['encoder.encoders.1.ffn.layer.0.bias']
+
+    state_dict['15.weight'] = best_state_dict['encoder.encoders.1.ffn.layer.2.weight']
+    state_dict['15.bias'] = best_state_dict['encoder.encoders.1.ffn.layer.2.bias']
+
+
+    state_dict['17.weight'] = best_state_dict['encoder.gconv_layers.2.gconv_layer.linear.weight']
+    state_dict['17.bias'] = best_state_dict['encoder.gconv_layers.2.gconv_layer.linear.bias']
+    #state_dict['17.weight'] = best_state_dict['encoder.encoders.2.self_attention.linear_q.weight']
+    #state_dict['18.weight'] = best_state_dict['encoder.encoders.2.self_attention.linear_k.weight']
+    state_dict['19.weight'] = best_state_dict['encoder.encoders.2.self_attention.linear_v.weight']
+    state_dict['20.weight'] = best_state_dict['encoder.encoders.0.self_attention.output_layer.weight']
+    
+    state_dict['21.weight'] = best_state_dict['encoder.encoders.2.ffn.layer.0.weight']
+    state_dict['21.bias'] = best_state_dict['encoder.encoders.2.ffn.layer.0.bias']
+
+    state_dict['23.weight'] = best_state_dict['encoder.encoders.2.ffn.layer.2.weight']
+    state_dict['23.bias'] = best_state_dict['encoder.encoders.2.ffn.layer.2.bias']
+
+    state_dict['25.weight'] = best_state_dict['end_conv.weight']
+    return state_dict
+
 def agl_stan() -> nn.Sequential:
     layers = []
 
@@ -231,39 +393,39 @@ def agl_stan() -> nn.Sequential:
     att_size = hidden_size // head_size
     scale = att_size ** -0.5
 
-    layers.append(nn.Linear(window, node_num))
+    layers.append(nn.Linear(window, node_num, bias=True))
     # AGL Layer
     for _ in range(num_layers):
         # encoder.gconv_layers.0.gconv_layer.weights_pool
         # encoder.gconv_layers.0.gconv_layer.bias_pool
         layers += [
-                nn.Linear(node_num, node_num), 
+                nn.Linear(node_num, node_num, bias=True), 
                 nn.ReLU(), 
-                nn.Linear(node_num, hidden_size)
+                nn.Linear(node_num, hidden_size, bias=True)
         ]
 
         # TSA Layer
         layers += [
             #nn.BatchNorm2d(hidden_size, eps=1e-6),
             # Multihead attention
-            nn.Linear(hidden_size, head_size * att_size, bias=False),
+            nn.Linear(hidden_size, head_size * att_size, bias=True),
             nn.ReLU(),
             #nn.Linear(hidden_size, head_size * att_size, bias=False),
             #nn.Linear(hidden_size, head_size * att_size, bias=False),
-            nn.Linear(head_size * att_size, hidden_size, bias=False),
+            nn.Linear(head_size * att_size, hidden_size, bias=True),
 
             #nn.BatchNorm2d(hidden_size, eps=1e-6),
 
             # Feed forward network
-            nn.Linear(hidden_size, filter_size), 
+            nn.Linear(hidden_size, filter_size, bias=True), 
             nn.ReLU(), 
-            nn.Linear(filter_size, hidden_size),
-            nn.Linear(hidden_size, node_num),
+            nn.Linear(filter_size, hidden_size, bias=True),
+            nn.Linear(hidden_size, node_num, bias=True),
         ]
     layers += [nn.ReLU(), nn.Linear(node_num, 8)]
     #layers += [nn.BatchNorm2d(hidden_size, eps=1e-6)]
     # _.view(batch_size, window, node_num, -1)
-    layers += [nn.Conv2d(int(config['data']['window']), int(config['data']['horizon']), padding=(2, 2), kernel_size=(5, 5), bias=True)]
+    # layers += [nn.Conv2d(int(config['data']['window']), int(config['data']['horizon']), padding=(2, 2), kernel_size=(5, 5), bias=False)]
     return nn.Sequential(*layers)
 
 def cifar10_cnn_A() -> nn.Sequential:
@@ -766,6 +928,10 @@ def load_net(  # noqa: C901
         return load_onnx_model(path)[0]
     elif "AGLSTAN" in path:
         original_network = agl_stan()
+        m = torch.load("../AGLSTAN/res/chi/best_model.pth", map_location=torch.device('cpu'))['state_dict']
+        ws = [m[f'encoder.gconv_layers.{i}.gconv_layer.weights_pool'] for i in range(3)]
+        bs = [m[f'encoder.gconv_layers.{i}.gconv_layer.bias_pool'] for i in range(3)]
+        original_network = AglStan(m['node_embeddings'], ws, bs)
     elif "mnist_sig" in path and "flattened" in path:
         assert n_layers is not None and n_neurons_per_layer is not None
         original_network = mnist_sig_a_b(n_layers, n_neurons_per_layer)
@@ -872,54 +1038,13 @@ def load_net(  # noqa: C901
                             else None)
     if "state_dict" in state_dict.keys():
         state_dict = state_dict["state_dict"]
-    state_dict = convertStateDict(original_network, original_network.state_dict(), best_model_state_dict)
+    if "AGLSTAN" in path:
+       state_dict = convertStateDict(original_network, original_network.state_dict(), best_model_state_dict)
     original_network.load_state_dict(state_dict)
     # original_network = original_network.blocks
     freeze_network(original_network)
 
     return original_network
-
-def convertStateDict(original_network, state_dict, best_state_dict):
-    # Assign state_dict values to cooresponding original_network layers
-    state_dict['1.weight'] = best_state_dict['encoder.gconv_layers.0.gconv_layer.linear.weight']
-    state_dict['1.bias'] = best_state_dict['encoder.gconv_layers.0.gconv_layer.linear.bias']
-    state_dict['4.weight'] = best_state_dict['encoder.encoders.0.self_attention.linear_q.weight']
-    state_dict['6.weight'] = best_state_dict['encoder.encoders.0.self_attention.output_layer.weight']
-
-    state_dict['7.weight'] = best_state_dict['encoder.encoders.0.ffn.layer.0.weight']
-    state_dict['7.bias'] = best_state_dict['encoder.encoders.0.ffn.layer.0.bias']
-
-    state_dict['9.weight'] = best_state_dict['encoder.encoders.0.ffn.layer.2.weight']
-    state_dict['9.bias'] = best_state_dict['encoder.encoders.0.ffn.layer.2.bias']
-
-
-    state_dict['11.weight'] = best_state_dict['encoder.gconv_layers.1.gconv_layer.linear.weight']
-    state_dict['11.bias'] = best_state_dict['encoder.gconv_layers.1.gconv_layer.linear.bias']
-    state_dict['14.weight'] = best_state_dict['encoder.encoders.1.self_attention.linear_q.weight']
-    state_dict['16.weight'] = best_state_dict['encoder.encoders.0.self_attention.output_layer.weight']
-    
-    state_dict['17.weight'] = best_state_dict['encoder.encoders.1.ffn.layer.0.weight']
-    state_dict['17.bias'] = best_state_dict['encoder.encoders.1.ffn.layer.0.bias']
-
-    state_dict['19.weight'] = best_state_dict['encoder.encoders.1.ffn.layer.2.weight']
-    state_dict['19.bias'] = best_state_dict['encoder.encoders.1.ffn.layer.2.bias']
-
-
-    state_dict['21.weight'] = best_state_dict['encoder.gconv_layers.2.gconv_layer.linear.weight']
-    state_dict['21.bias'] = best_state_dict['encoder.gconv_layers.2.gconv_layer.linear.bias']
-    state_dict['24.weight'] = best_state_dict['encoder.encoders.2.self_attention.linear_q.weight']
-    state_dict['26.weight'] = best_state_dict['encoder.encoders.0.self_attention.output_layer.weight']
-    
-    state_dict['27.weight'] = best_state_dict['encoder.encoders.2.ffn.layer.0.weight']
-    state_dict['27.bias'] = best_state_dict['encoder.encoders.2.ffn.layer.0.bias']
-
-    state_dict['29.weight'] = best_state_dict['encoder.encoders.2.ffn.layer.2.weight']
-    state_dict['29.bias'] = best_state_dict['encoder.encoders.2.ffn.layer.2.bias']
-
-
-    state_dict['33.weight'] = best_state_dict['end_conv.weight']
-    state_dict['33.bias'] = best_state_dict['end_conv.bias']
-    return state_dict
 
 def load_onnx_model(path: str) -> Tuple[nn.Sequential, Tuple[int, ...], str]:
     onnx_model = load_onnx(path)

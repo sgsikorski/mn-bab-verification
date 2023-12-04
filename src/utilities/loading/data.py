@@ -10,23 +10,26 @@ def transform_image(
     input_dim: Tuple[int, ...],
 ) -> Tensor:
     normalized_pixel_values = torch.tensor([float(p) for p in pixel_values])
-    #if len(pixel_values)==9409:
-    #    normalized_pixel_values = torch.tensor([float(p) for p in pixel_values[0:-1]])
-    #else:
-    #    normalized_pixel_values = torch.tensor([float(p) / 255.0 for p in pixel_values])
+    if len(pixel_values) == 4928:
+        pass
+    elif len(pixel_values)==9409:
+       normalized_pixel_values = torch.tensor([float(p) for p in pixel_values[0:-1]])
+    else:
+       normalized_pixel_values = torch.tensor([float(p) / 255.0 for p in pixel_values])
     if len(input_dim) >= 3:
-        image = normalized_pixel_values.view(input_dim)
-        image_dim = input_dim
-        # if len(pixel_values)==9409:
-        #     input_dim_in_chw = (input_dim[0], input_dim[1], input_dim[2])
-        #     image_in_chw = normalized_pixel_values.view(input_dim_in_chw)
-        #     image_dim = input_dim_in_chw
-        # else:
-        #     input_dim_in_hwc = (input_dim[1], input_dim[2], input_dim[0])
-        #     image_in_hwc = normalized_pixel_values.view(input_dim_in_hwc)
-        #     image_in_chw = image_in_hwc.permute(2, 0, 1)
-        #     image_dim = input_dim
-        # image = image_in_chw
+        if len(pixel_values) == 4928:
+            image_in_chw = normalized_pixel_values.view(input_dim)
+            image_dim = input_dim
+        elif len(pixel_values)==9409:
+            input_dim_in_chw = (input_dim[0], input_dim[1], input_dim[2])
+            image_in_chw = normalized_pixel_values.view(input_dim_in_chw)
+            image_dim = input_dim_in_chw
+        else:
+            input_dim_in_hwc = (input_dim[1], input_dim[2], input_dim[0])
+            image_in_hwc = normalized_pixel_values.view(input_dim_in_hwc)
+            image_in_chw = image_in_hwc.permute(2, 0, 1)
+            image_dim = input_dim
+        image = image_in_chw
     elif len(input_dim) > 1:
         image_dim = (int(torch.prod(torch.tensor(input_dim))),)
         image = normalized_pixel_values.view(input_dim)

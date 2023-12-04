@@ -182,6 +182,8 @@ def _evaluate_cstr(
 ) -> Union[Tensor, np.ndarray]:
     if len(net_out.shape) <= 1:
         net_out = net_out.reshape(1, -1)
+    if len(net_out.shape) == 4:
+        net_out = net_out[0][0]
 
     n_samp = net_out.shape[0]
 

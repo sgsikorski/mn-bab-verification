@@ -14,12 +14,24 @@
             "request": "launch",
             "program": "src/verify.py",
             "console": "integratedTerminal",
-            "justMyCode": true,
             "args": [
                 "-c",
                 "configs/SE4ML/AGL-STAN.json",
-                ">",
-                "logs/verifierLog.txt"
+                "--test_num",
+                "100",
+            ]
+        },
+        {
+            "name": "Run CIFAR Verifier",
+            "type": "python",
+            "request": "launch",
+            "program": "src/verify.py",
+            "console": "integratedTerminal",
+            "args": [
+                "-c",
+                "configs/baseline/cifar10_conv_small.json",
+                "--test_num",
+                "10",
             ]
         },
     ]

@@ -82,11 +82,11 @@ class Linear(nn.Linear, AbstractModule):
         output_lb = (
             pos_weight.matmul(interval_lb.unsqueeze(-1))
             + neg_weight.matmul(interval_ub.unsqueeze(-1))
-        ).squeeze(dim=-1) + self.bias
+        ).squeeze(dim=-1) #+ self.bias
         output_ub = (
             pos_weight.matmul(interval_ub.unsqueeze(-1))
             + neg_weight.matmul(interval_lb.unsqueeze(-1))
-        ).squeeze(dim=-1) + self.bias
+        ).squeeze(dim=-1) #+ self.bias
 
         # assert (output_ub >= output_lb).all()
 

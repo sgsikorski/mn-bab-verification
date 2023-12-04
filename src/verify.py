@@ -63,8 +63,12 @@ if __name__ == "__main__":
         original_network, config.input_dim
     ).to(device)
     freeze_network(network)
-    num_classes = network.output_dim[-1]
 
+    use2d = True if "AGLSTAN" in config.network.path else False
+    if use2d:
+        num_classes = 2
+    else:
+        num_classes = network.output_dim[-1]
     verifier = MNBaBVerifier(network, device, config.verifier)
 
     test_file = open(config.test_data_path, "r")
@@ -85,16 +89,23 @@ if __name__ == "__main__":
         if args.test_num > 0 and i - args.test_from >= args.test_num:
             break
         input, input_lb, input_ub = transform_and_bound(pixel_values, config, device)
+        if use2d:
+            input = input[0]
+            input_lb = input_lb[0]
+            input_ub = input_ub[0]
 
         # Change this so that we run 8 of the 77, 8 crime matrix from the alpha=8 window
         # Then we can extract each for i, j of the predicted crime matrix and compare
-        crime_matrix = original_network(input).view(77, 8)
-        pred_label = 0 if crime_matrix[i // 77][i % 8] < 0 else 1
-        # pred_label = torch.argmax(original_network(input)).item()
+        if use2d:
+            crime_matrix = original_network(input)[0][0]
+            pred_label = 0 if crime_matrix[i // 77][i % 8] < 0 else 1
+        else:
+            pred_label = torch.argmax(original_network(input)).item()
         if pred_label != label:
             print(f"Network fails on test image {i}, skipping.\n")
             continue
         else:
+            print("Correctly predicted instance: ", i)
             n_correct += 1
 
         print("=" * 20)

@@ -26,7 +26,7 @@
         1.0
       ],
       "test_data_path": "../data/chi/crime.csv",
-      "eps": 0.00784313725490196,
+      "eps": 0.05,
       "use_gpu": false,
       "optimize_alpha": true,
       "alpha_lr": 0.1,
@@ -53,21 +53,19 @@
         "use_indirect_effect": false,
         "reduce_op": "min",
         "use_abs": true,
-        "use_cost_adjusted_scores": true
+        "use_cost_adjusted_scores": false
       },
       "peak_lr_scaling_factor": 2.0,
       "final_lr_div_factor": 10.0,
       "beta_lr": 0.05,
       "bab_batch_sizes": [
-        100,
-        150,
-        300
+        1
       ],
-      "recompute_intermediate_bounds_after_branching": true,
+      "recompute_intermediate_bounds_after_branching": false,
       "use_dependence_sets": true,
       "use_early_termination": false,
       "random_seed": 0,
-      "timeout": 120,
+      "timeout": 100,
       "experiment_name": "AGLSTAN_chi_crime",
       "use_online_logging": false,
       "comet_api_key": "-",
