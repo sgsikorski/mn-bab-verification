@@ -876,27 +876,27 @@ class MNBaBVerifier:
         if not properties_to_verify:
             return (True, None, None, 0, 0)
 
-        if self.outer.adversarial_attack:
-            adversarial_example, __ = torch_whitebox_attack(
-                self.network,
-                input_lb.device,
-                input,
-                properties_to_verify,
-                input_lb,
-                input_ub,
-                restarts=self.outer.adversarial_attack_restarts,
-            )
-            if adversarial_example is not None:
-                selected_adv_example = (
-                    torch.tensor(adversarial_example[0])
-                    .unsqueeze(0)
-                    .to(input_lb.device)
-                )
-                assert ~_evaluate_cstr(
-                    properties_to_verify_orig,
-                    self.network(selected_adv_example).cpu().detach().numpy(),
-                )
-                return (False, [selected_adv_example], None, None, None)
+        # if self.outer.adversarial_attack:
+        #     adversarial_example, __ = torch_whitebox_attack(
+        #         self.network,
+        #         input_lb.device,
+        #         input,
+        #         properties_to_verify,
+        #         input_lb,
+        #         input_ub,
+        #         restarts=self.outer.adversarial_attack_restarts,
+        #     )
+        #     if adversarial_example is not None:
+        #         selected_adv_example = (
+        #             torch.tensor(adversarial_example[0])
+        #             .unsqueeze(0)
+        #             .to(input_lb.device)
+        #         )
+        #         assert ~_evaluate_cstr(
+        #             properties_to_verify_orig,
+        #             self.network(selected_adv_example).cpu().detach().numpy(),
+        #         )
+        #         return (False, [selected_adv_example], None, None, None)
 
         if (
             self.outer.milp_config.refine_via_milp > 0

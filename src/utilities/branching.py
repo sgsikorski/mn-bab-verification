@@ -593,11 +593,11 @@ def _compute_split_scores_sequential(  # noqa C901
                 current_layer_score += indirect_effect
             if use_abs:
                 current_layer_score = abs(current_layer_score)
-            score[layer_tag(layer)] = current_layer_score.squeeze(1)
-            backup_score[layer_tag(layer)] = -1 * direct_effect.squeeze(1)
-            abstract_shape = layer.backsubstitute(
-                backsubstitution_config, abstract_shape
-            )
+            score[layer_tag(layer)] = current_layer_score #.squeeze(1)
+            backup_score[layer_tag(layer)] = -1 * direct_effect #.squeeze(1)
+            #abstract_shape = layer.backsubstitute(
+            #    backsubstitution_config, abstract_shape
+            #)
         elif isinstance(layer, Sequential):
             (
                 score,
@@ -1035,6 +1035,9 @@ def _compute_direct_and_propagation_effect_on_lower_bound(
         propagation_effect_mode,
     )
 
+    #if lb_slope == 0 and ub_slope == 0:
+    #    return torch.tensor(0), torch.tensor(0)
+    # neg_lb_coef: (1, 1, 8, 77, x)
     propagation_contribution_before = (
         neg_lb_coef * negative_coef_multiplier_before
         + pos_lb_coef * positive_coef_multiplier_before

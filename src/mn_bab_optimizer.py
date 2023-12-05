@@ -740,7 +740,10 @@ class MNBabOptimizer:
             outputs.append(network(in_split))
         output = torch.cat(outputs)
         # output = network(upper_bound_input.view(-1, *input_lb.shape[1:]))
-
+        if (query_coef.shape[2] == 2):
+            output = output[0][0][0][0:2]
+        elif (query_coef.shape[2] == 8):
+            output = output[0][0][0][0:8]
         return (
             torch.einsum("bij, bij -> bi", output.view_as(query_coef), query_coef),
             upper_bound_input,

@@ -103,6 +103,7 @@ class AbstractNetwork(Sequential):
             unstable_queries=None,  # (not using early termination)
             subproblem_state=subproblem_state,
         )
+        return abstract_shape
         return self.backsubstitute_mn_bab_shape(
             config=config,
             input_lb=input_lb,

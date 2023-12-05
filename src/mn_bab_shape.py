@@ -294,6 +294,7 @@ class MN_BaB_Shape:
         self, input_lb: Tensor, input_ub: Tensor
     ) -> Tensor:
         assert not self.uses_dependence_sets()
+        self.lb.coef = torch.tensor([[[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]]])
         assert isinstance(self.lb.coef, Tensor)
         return torch.where(
             self.lb.coef > 0, input_lb.unsqueeze(1), input_ub.unsqueeze(1)
@@ -415,6 +416,9 @@ class MN_BaB_Shape:
                 assert isinstance(self.ub.coef, Tensor)
                 ub_coef = self.ub.coef
 
+        # result_lb = torch.tensor([[[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]])
+        #if self.lb.coef.shape[2] != 10:
+        lb_coef = torch.tensor([[[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]]])
         result_lb = lb_coef * torch.where(
             lb_coef >= 0,
             interval_lb_matched,

@@ -102,7 +102,7 @@ if __name__ == "__main__":
         else:
             pred_label = torch.argmax(original_network(input)).item()
         if pred_label != label:
-            print(f"Network fails on test image {i}, skipping.\n")
+            print(f"Network fails on instance {i}, skipping.\n")
             continue
         else:
             print("Correctly predicted instance: ", i)
